@@ -2,11 +2,20 @@
 set -euo pipefail
 
 # Cleanup temporary files on exit
-trap 'rm -f issues.json comments.json labels.json' EXIT
+#trap 'rm -f issues.json prs.json all_items.json comments.json labels.json' EXIT
 
 # Replace with your actual source repository
 SOURCE_REPO="source/repo"
 TARGET_REPO="destination/repo"
+
+# Array of issue numbers to skip (e.g., SKIP_THESE_ISSUES=(1 2 5))
+SKIP_THESE_ISSUES=()
+
+if [ -n "${DRY_RUN:-}" ]; then
+    echo "=== DRY RUN MODE ENABLED ==="
+    echo "No changes will be made to $TARGET_REPO"
+    echo "============================"
+fi
 
 echo "Syncing labels from $SOURCE_REPO to $TARGET_REPO..."
 # Fetch all labels from the source repo using the API
@@ -18,33 +27,64 @@ jq -c '.[]' labels.json | while read -r label; do
     desc=$(echo "$label" | jq -r '.description // ""')
     
     echo "Syncing label: $name"
-    # Attempt to create the label. If it already exists, fall back to editing
-    # it to ensure color/desc match.
-    gh api --method POST "repos/$TARGET_REPO/labels" \
-        -f name="$name" -f color="$color" -f description="$desc" --silent 2>/dev/null || \
-    gh api --method PATCH "repos/$TARGET_REPO/labels/$name" \
-        -f color="$color" -f description="$desc" --silent 2>/dev/null || true
+    if [ -n "${DRY_RUN:-}" ]; then
+        echo " [DRY RUN] Would create/update label: $name (color: $color, desc: $desc)"
+    else
+        # Attempt to create the label. If it already exists, fall back to editing
+        # it to ensure color/desc match.
+        gh api --method POST "repos/$TARGET_REPO/labels" \
+            -f name="$name" -f color="$color" -f description="$desc" --silent 2>/dev/null || \
+        gh api --method PATCH "repos/$TARGET_REPO/labels/$name" \
+            -f color="$color" -f description="$desc" --silent 2>/dev/null || true
+    fi
 done
 
-echo "Fetching issues from $SOURCE_REPO..."
-# Fetch up to 1000 issues (adjust limit if needed)
+echo "Fetching issues and PRs from $SOURCE_REPO..."
+# Fetch issues and PRs
 gh issue list -R "$SOURCE_REPO" --state all --json number,title,body,labels,assignees,state --limit 1000 > issues.json
+gh pr list -R "$SOURCE_REPO" --state all --json number,title,body,labels,assignees,state --limit 1000 > prs.json
 
-# Reverse the array to create oldest issues first, helping to align issue
-# numbers
-jq -c 'reverse | .[]' issues.json | while read -r issue; do
-    number=$(echo "$issue" | jq -r '.number')
-    title=$(echo "$issue" | jq -r '.title')
-    body=$(echo "$issue" | jq -r '.body')
-    state=$(echo "$issue" | jq -r '.state')
+# Inject type, merge, and sort by number
+jq '[.[] | . + {type: "issue"}]' issues.json > issues_typed.json
+jq '[.[] | . + {type: "pr"}]' prs.json > prs_typed.json
+jq -s '.[0] + .[1] | sort_by(.number)' issues_typed.json prs_typed.json > all_items.json
+
+# Cleanup intermediate typed files
+rm -f issues_typed.json prs_typed.json
+
+jq -c '.[]' all_items.json | while read -r item; do
+    number=$(echo "$item" | jq -r '.number')
+    type=$(echo "$item" | jq -r '.type')
     
-    # Prepend original issue number to the body to preserve the reference
-    printf -v body "*Original issue: %s#%s*\n\n%s" "$SOURCE_REPO" "$number" "$body"
+    # Check if the issue/PR should be skipped
+    skip=false
+    for skip_num in "${SKIP_THESE_ISSUES[@]}"; do
+        if [[ "$number" == "$skip_num" ]]; then
+            skip=true
+            break
+        fi
+    done
     
-    labels=$(echo "$issue" | jq -r '.labels[].name // empty' | paste -sd, -)
-    assignees=$(echo "$issue" | jq -r '.assignees[].login // empty' | paste -sd, -)
+    if [ "$skip" = true ]; then
+        echo "Skipping $type #$number as requested."
+        continue
+    fi
     
-    echo "Transferring issue #$number: $title"
+    title=$(echo "$item" | jq -r '.title')
+    body=$(echo "$item" | jq -r '.body')
+    state=$(echo "$item" | jq -r '.state')
+    
+    if [ "$type" == "pr" ]; then
+        title="[Original PR] $title"
+        printf -v body "*Original PR: %s#%s*\n\n%s" "$SOURCE_REPO" "$number" "$body"
+        echo "Transferring PR #$number as dummy issue: $title"
+    else
+        printf -v body "*Original issue: %s#%s*\n\n%s" "$SOURCE_REPO" "$number" "$body"
+        echo "Transferring issue #$number: $title"
+    fi
+    
+    labels=$(echo "$item" | jq -r '.labels[].name // empty' | paste -sd, -)
+    assignees=$(echo "$item" | jq -r '.assignees[].login // empty' | paste -sd, -)
     
     # Build the create command
     cmd=(gh issue create -R "$TARGET_REPO" --title "$title" --body "$body")
@@ -57,11 +97,15 @@ jq -c 'reverse | .[]' issues.json | while read -r issue; do
         cmd+=(--assignee "$assignees")
     fi
     
-    # Create issue and extract the new issue number from the returned URL
-    new_issue_url=$("${cmd[@]}")
-    new_issue_number=$(echo "$new_issue_url" | awk -F'/' '{print $NF}')
-    
-    echo " -> Created as issue #$new_issue_number in target repo."
+    if [ -n "${DRY_RUN:-}" ]; then
+        echo " [DRY RUN] Would execute: ${cmd[*]}"
+        new_issue_number="DRY_RUN_ID"
+    else
+        # Create issue and extract the new issue number from the returned URL
+        new_issue_url=$("${cmd[@]}")
+        new_issue_number=$(echo "$new_issue_url" | awk -F'/' '{print $NF}')
+        echo " -> Created as issue #$new_issue_number in target repo."
+    fi
     
     # Fetch and transfer comments
     gh api "repos/$SOURCE_REPO/issues/$number/comments" > comments.json
@@ -76,18 +120,28 @@ jq -c 'reverse | .[]' issues.json | while read -r issue; do
             printf -v new_comment_body "*Original comment by @%s:*\n\n%s" "$comment_author" "$comment_body"
         fi
         
-        gh issue comment "$new_issue_number" -R "$TARGET_REPO" --body "$new_comment_body"
-        echo "   -> Transferred comment by $comment_author"
+        if [ -n "${DRY_RUN:-}" ]; then
+            echo "   [DRY RUN] Would transfer comment by $comment_author"
+        else
+            gh issue comment "$new_issue_number" -R "$TARGET_REPO" --body "$new_comment_body"
+            echo "   -> Transferred comment by $comment_author"
+        fi
     done
     
-    # Close the issue if it was closed in the original repo
-    if [ "$state" == "CLOSED" ]; then
-        gh issue close "$new_issue_number" -R "$TARGET_REPO"
-        echo "   -> Closed issue #$new_issue_number"
+    # Close the issue if it was closed or merged in the original repo
+    if [[ "$state" == "CLOSED" || "$state" == "MERGED" ]]; then
+        if [ -n "${DRY_RUN:-}" ]; then
+            echo "   [DRY RUN] Would close issue #$new_issue_number"
+        else
+            gh issue close "$new_issue_number" -R "$TARGET_REPO"
+            echo "   -> Closed issue #$new_issue_number"
+        fi
     fi
     
     # Optional: sleep for a few seconds to avoid hitting GitHub API rate limits
-    sleep 2
+    if [ -z "${DRY_RUN:-}" ]; then
+        sleep 2
+    fi
 done
 
 echo "Transfer complete!"
