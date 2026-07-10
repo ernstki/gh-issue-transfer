@@ -32,8 +32,8 @@ Credits
 -------
 
 Assisted-by:  gemini/gemini-3.1-pro-preview<br>
-License:      [WTFPL][]
+License:      [Zero-clause BSD][0bsd]
 
 
 [1]: https://docs.github.com/en/repositories/creating-and-managing-repositories/transferring-a-repository
-[wtfpl]: https://www.wtfpl.net/about
+[0bsd]: https://opensource.org/license/0bsd

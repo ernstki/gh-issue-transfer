@@ -5,7 +5,7 @@
 ##
 ##  Assisted-by:  gemini/gemini-3.1-pro-preview
 ##  Date:         9 July 2026
-##  License:      WTFPL
+##  License:      Zero-Clause BSD (basically public domain)
 ##
 set -euo pipefail
 
