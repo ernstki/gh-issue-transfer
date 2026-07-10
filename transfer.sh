@@ -24,13 +24,14 @@ done
 
 echo "Fetching issues from $SOURCE_REPO..."
 # Fetch up to 1000 issues (adjust limit if needed)
-gh issue list -R "$SOURCE_REPO" --state all --json number,title,body,labels,assignees --limit 1000 > issues.json
+gh issue list -R "$SOURCE_REPO" --state all --json number,title,body,labels,assignees,state --limit 1000 > issues.json
 
 # Reverse the array to create oldest issues first, helping to align issue numbers
 jq -c 'reverse | .[]' issues.json | while read -r issue; do
     number=$(echo "$issue" | jq -r '.number')
     title=$(echo "$issue" | jq -r '.title')
     body=$(echo "$issue" | jq -r '.body')
+    state=$(echo "$issue" | jq -r '.state')
     
     # Prepend original issue number to the body to preserve the reference
     printf -v body "*Original issue: %s#%s*\n\n%s" "$SOURCE_REPO" "$number" "$body"
@@ -73,6 +74,12 @@ jq -c 'reverse | .[]' issues.json | while read -r issue; do
         gh issue comment "$new_issue_number" -R "$TARGET_REPO" --body "$new_comment_body"
         echo "   -> Transferred comment by $comment_author"
     done
+    
+    # Close the issue if it was closed in the original repo
+    if [ "$state" == "CLOSED" ]; then
+        gh issue close "$new_issue_number" -R "$TARGET_REPO"
+        echo "   -> Closed issue #$new_issue_number"
+    fi
     
     # Optional: sleep for a few seconds to avoid hitting GitHub API rate limits
     sleep 2
