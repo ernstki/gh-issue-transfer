@@ -32,8 +32,7 @@ Credits
 -------
 
 Assisted-by:  gemini/gemini-3.1-pro-preview<br>
-License:      [Zero-clause BSD][0bsd]
+License:      [Zero-Clause BSD](LICENSE.txt)
 
 
 [1]: https://docs.github.com/en/repositories/creating-and-managing-repositories/transferring-a-repository
-[0bsd]: https://opensource.org/license/0bsd
