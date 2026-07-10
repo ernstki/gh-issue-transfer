@@ -64,7 +64,11 @@ jq -c 'reverse | .[]' issues.json | while read -r issue; do
         comment_body=$(echo "$comment" | jq -r '.body')
         comment_author=$(echo "$comment" | jq -r '.user.login')
         
-        printf -v new_comment_body "*Original comment by @%s:*\n\n%s" "$comment_author" "$comment_body"
+        if [ "$comment_author" == "ernstki" ]; then
+            new_comment_body="$comment_body"
+        else
+            printf -v new_comment_body "*Original comment by @%s:*\n\n%s" "$comment_author" "$comment_body"
+        fi
         
         gh issue comment "$new_issue_number" -R "$TARGET_REPO" --body "$new_comment_body"
         echo "   -> Transferred comment by $comment_author"
