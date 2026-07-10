@@ -1,8 +1,26 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
 # Replace with your actual source repository
 SOURCE_REPO="source/repo"
 TARGET_REPO="destination/repo"
+
+echo "Syncing labels from $SOURCE_REPO to $TARGET_REPO..."
+# Fetch all labels from the source repo using the API
+gh api "repos/$SOURCE_REPO/labels" --paginate > labels.json
+
+jq -c '.[]' labels.json | while read -r label; do
+    name=$(echo "$label" | jq -r '.name')
+    color=$(echo "$label" | jq -r '.color')
+    desc=$(echo "$label" | jq -r '.description // ""')
+    
+    echo "Syncing label: $name"
+    # Attempt to create the label. If it already exists, fall back to editing it to ensure color/desc match.
+    gh api --method POST "repos/$TARGET_REPO/labels" \
+        -f name="$name" -f color="$color" -f description="$desc" --silent 2>/dev/null || \
+    gh api --method PATCH "repos/$TARGET_REPO/labels/$name" \
+        -f color="$color" -f description="$desc" --silent 2>/dev/null || true
+done
 
 echo "Fetching issues from $SOURCE_REPO..."
 # Fetch up to 1000 issues (adjust limit if needed)
@@ -15,7 +33,7 @@ jq -c 'reverse | .[]' issues.json | while read -r issue; do
     body=$(echo "$issue" | jq -r '.body')
     
     # Prepend original issue number to the body to preserve the reference
-    body="*Original issue: $SOURCE_REPO#$number*\n\n$body"
+    printf -v body "*Original issue: %s#%s*\n\n%s" "$SOURCE_REPO" "$number" "$body"
     
     labels=$(echo "$issue" | jq -r '.labels[].name // empty' | paste -sd, -)
     assignees=$(echo "$issue" | jq -r '.assignees[].login // empty' | paste -sd, -)
@@ -46,7 +64,7 @@ jq -c 'reverse | .[]' issues.json | while read -r issue; do
         comment_body=$(echo "$comment" | jq -r '.body')
         comment_author=$(echo "$comment" | jq -r '.user.login')
         
-        new_comment_body="*Original comment by @$comment_author:*\n\n$comment_body"
+        printf -v new_comment_body "*Original comment by @%s:*\n\n%s" "$comment_author" "$comment_body"
         
         gh issue comment "$new_issue_number" -R "$TARGET_REPO" --body "$new_comment_body"
         echo "   -> Transferred comment by $comment_author"
@@ -57,5 +75,5 @@ jq -c 'reverse | .[]' issues.json | while read -r issue; do
 done
 
 # Cleanup temporary files
-rm -f issues.json comments.json
+rm -f issues.json comments.json labels.json
 echo "Transfer complete!"
