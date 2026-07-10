@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Cleanup temporary files on exit
+trap 'rm -f issues.json comments.json labels.json' EXIT
+
 # Replace with your actual source repository
 SOURCE_REPO="source/repo"
 TARGET_REPO="destination/repo"
@@ -15,7 +18,8 @@ jq -c '.[]' labels.json | while read -r label; do
     desc=$(echo "$label" | jq -r '.description // ""')
     
     echo "Syncing label: $name"
-    # Attempt to create the label. If it already exists, fall back to editing it to ensure color/desc match.
+    # Attempt to create the label. If it already exists, fall back to editing
+    # it to ensure color/desc match.
     gh api --method POST "repos/$TARGET_REPO/labels" \
         -f name="$name" -f color="$color" -f description="$desc" --silent 2>/dev/null || \
     gh api --method PATCH "repos/$TARGET_REPO/labels/$name" \
@@ -26,7 +30,8 @@ echo "Fetching issues from $SOURCE_REPO..."
 # Fetch up to 1000 issues (adjust limit if needed)
 gh issue list -R "$SOURCE_REPO" --state all --json number,title,body,labels,assignees,state --limit 1000 > issues.json
 
-# Reverse the array to create oldest issues first, helping to align issue numbers
+# Reverse the array to create oldest issues first, helping to align issue
+# numbers
 jq -c 'reverse | .[]' issues.json | while read -r issue; do
     number=$(echo "$issue" | jq -r '.number')
     title=$(echo "$issue" | jq -r '.title')
@@ -85,6 +90,4 @@ jq -c 'reverse | .[]' issues.json | while read -r issue; do
     sleep 2
 done
 
-# Cleanup temporary files
-rm -f issues.json comments.json labels.json
 echo "Transfer complete!"
