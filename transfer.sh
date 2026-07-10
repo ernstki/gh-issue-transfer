@@ -1,12 +1,20 @@
 #!/usr/bin/env bash
+##
+##  Transfer GitHub labels, issues, PRs and their comments from one repository
+##  to another
+##
+##  Assisted-by:  gemini/gemini-3.1-pro-preview
+##  Date:         9 July 2026
+##  License:      WTFPL
+##
 set -euo pipefail
 
 # Cleanup temporary files on exit
-#trap 'rm -f issues.json prs.json all_items.json comments.json labels.json' EXIT
+trap 'rm -f issues.json prs.json all_items.json comments.json labels.json' EXIT
 
 # Replace with your actual source repository
-SOURCE_REPO="source/repo"
-TARGET_REPO="destination/repo"
+SOURCE_REPO=${SOURCE_REPO:?Need a SOURCE repo in user-or-org/repo-name form}
+TARGET_REPO=${TARGET_REPO:?Need a TARGET repo in user-or-org/repo-name form}
 
 # Array of issue numbers to skip (e.g., SKIP_THESE_ISSUES=(1 2 5))
 SKIP_THESE_ISSUES=()
@@ -25,7 +33,7 @@ jq -c '.[]' labels.json | while read -r label; do
     name=$(echo "$label" | jq -r '.name')
     color=$(echo "$label" | jq -r '.color')
     desc=$(echo "$label" | jq -r '.description // ""')
-    
+
     echo "Syncing label: $name"
     if [ -n "${DRY_RUN:-}" ]; then
         echo " [DRY RUN] Would create/update label: $name (color: $color, desc: $desc)"
@@ -55,7 +63,7 @@ rm -f issues_typed.json prs_typed.json
 jq -c '.[]' all_items.json | while read -r item; do
     number=$(echo "$item" | jq -r '.number')
     type=$(echo "$item" | jq -r '.type')
-    
+
     # Check if the issue/PR should be skipped
     skip=false
     for skip_num in "${SKIP_THESE_ISSUES[@]}"; do
@@ -64,16 +72,16 @@ jq -c '.[]' all_items.json | while read -r item; do
             break
         fi
     done
-    
+
     if [ "$skip" = true ]; then
         echo "Skipping $type #$number as requested."
         continue
     fi
-    
+
     title=$(echo "$item" | jq -r '.title')
     body=$(echo "$item" | jq -r '.body')
     state=$(echo "$item" | jq -r '.state')
-    
+
     if [ "$type" == "pr" ]; then
         title="[Original PR] $title"
         printf -v body "*Original PR: %s#%s*\n\n%s" "$SOURCE_REPO" "$number" "$body"
@@ -82,21 +90,21 @@ jq -c '.[]' all_items.json | while read -r item; do
         printf -v body "*Original issue: %s#%s*\n\n%s" "$SOURCE_REPO" "$number" "$body"
         echo "Transferring issue #$number: $title"
     fi
-    
+
     labels=$(echo "$item" | jq -r '.labels[].name // empty' | paste -sd, -)
     assignees=$(echo "$item" | jq -r '.assignees[].login // empty' | paste -sd, -)
-    
+
     # Build the create command
     cmd=(gh issue create -R "$TARGET_REPO" --title "$title" --body "$body")
-    
+
     if [ -n "$labels" ]; then
         cmd+=(--label "$labels")
     fi
-    
+
     if [ -n "$assignees" ]; then
         cmd+=(--assignee "$assignees")
     fi
-    
+
     if [ -n "${DRY_RUN:-}" ]; then
         echo " [DRY RUN] Would execute: ${cmd[*]}"
         new_issue_number="DRY_RUN_ID"
@@ -106,20 +114,20 @@ jq -c '.[]' all_items.json | while read -r item; do
         new_issue_number=$(echo "$new_issue_url" | awk -F'/' '{print $NF}')
         echo " -> Created as issue #$new_issue_number in target repo."
     fi
-    
+
     # Fetch and transfer comments
     gh api "repos/$SOURCE_REPO/issues/$number/comments" > comments.json
-    
+
     jq -c '.[]' comments.json | while read -r comment; do
         comment_body=$(echo "$comment" | jq -r '.body')
         comment_author=$(echo "$comment" | jq -r '.user.login')
-        
+
         if [ "$comment_author" == "ernstki" ]; then
             new_comment_body="$comment_body"
         else
             printf -v new_comment_body "*Original comment by @%s:*\n\n%s" "$comment_author" "$comment_body"
         fi
-        
+
         if [ -n "${DRY_RUN:-}" ]; then
             echo "   [DRY RUN] Would transfer comment by $comment_author"
         else
@@ -127,7 +135,7 @@ jq -c '.[]' all_items.json | while read -r item; do
             echo "   -> Transferred comment by $comment_author"
         fi
     done
-    
+
     # Close the issue if it was closed or merged in the original repo
     if [[ "$state" == "CLOSED" || "$state" == "MERGED" ]]; then
         if [ -n "${DRY_RUN:-}" ]; then
@@ -137,7 +145,7 @@ jq -c '.[]' all_items.json | while read -r item; do
             echo "   -> Closed issue #$new_issue_number"
         fi
     fi
-    
+
     # Optional: sleep for a few seconds to avoid hitting GitHub API rate limits
     if [ -z "${DRY_RUN:-}" ]; then
         sleep 2
