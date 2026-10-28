@@ -9,6 +9,9 @@ PRs found in the source repository.
 Use this when you don't have ownership of one of the two repositories, and
 therefore can't do a proper [repository transfer][1].
 
+Authentication and the actual _creation_ of issues in the destination repo
+is handled by the [official CLI][2], `gh`.
+
 Usage
 -----
 
@@ -34,5 +37,5 @@ Credits
 Assisted-by:  gemini/gemini-3.1-pro-preview<br>
 License:      [Zero-Clause BSD](LICENSE.txt)
 
-
 [1]: https://docs.github.com/en/repositories/creating-and-managing-repositories/transferring-a-repository
+[2]: https://cli.github.com
